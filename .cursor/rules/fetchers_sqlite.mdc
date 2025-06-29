@@ -1,0 +1,15 @@
+---
+description: 
+globs: fetchers/**.py,- "fetchers/**.py"
+alwaysApply: false
+---
+---
+description: Rules for anything inside fetchers/
+globs:
+  - "fetchers/**.py"
+type: Auto Attached
+---
+
+- Every fetcher must return a `List[PostLite]`.
+- Persist each item using `UPSERT` into `data/fere_tweets.db`.
+- Ensure each network call has `timeout=60` and exponential back-off.

@@ -1,0 +1,9 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+- Every function must have a one-sentence docstring in Google style.  
+- Public modules (`*.py` in `engines/`) need a top-level doc comment explaining purpose.  
+- When you change behavior, update the `CHANGELOG.md` under the "Unreleased" section.  
+- README.md must include one usage example for each CLI entrypoint.

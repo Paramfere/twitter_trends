@@ -1,0 +1,17 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+---
+description: Global Python standards for FERE Twitter engine
+type: Always
+---
+
+- Target **Python 3.11**.
+- Use **pydantic** for all data models; never define bare dataclasses.
+- Fetch API keys exclusively via `os.getenv`, never hard-code secrets.
+- Wrap external calls in `try / except` and log failures, don't raise.
+- Write a short **pytest** before adding a new module.
+- Run `ruff --fix` and `black` formatting before saving.
+

@@ -1,0 +1,11 @@
+---
+description: Encourage test-driven flow
+globs: 
+alwaysApply: false
+---
+---
+description: Encourage test-driven flow
+type: Agent Requested
+---
+
+When asked to add a new feature, first propose a minimal failing test in `tests/`, then implement code to make it pass.

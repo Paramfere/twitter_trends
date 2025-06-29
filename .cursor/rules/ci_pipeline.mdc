@@ -1,0 +1,9 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+- All Python changes must pass `ruff --fix`, `black --check`, and `mypy src/` before merge.  
+- Tests in `tests/` must run under pytest with `--cov` and meet 90% coverage.  
+- Any new file must be referenced in `pytest.ini` or workflow YAML to avoid being untested.  
+- CI workflow file is located at `.github/workflows/ci.yml`. Updates to it require a PR with two approvals.

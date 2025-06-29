@@ -1,0 +1,10 @@
+---
+description: 
+globs: scripts/*.py
+alwaysApply: false
+---
+- Always write files under `data/` with filename `snake_case_YYYY-MM-DD.csv`.  
+- Include a header row matching the dict keys exactly.  
+- Use `pandas.DataFrame.to_csv(..., index=False)` for portability.  
+- Create the `data/` directory if missing (`Path(...).mkdir(exist_ok=True)`).  
+- Print a single summary line: `Wrote {n} rows to {path}`.

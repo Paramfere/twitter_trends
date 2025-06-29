@@ -1,0 +1,10 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+- Only one function (`build_feed`) in `orchestrator.py` should drive the full ETL.  
+- It must accept no args and return `List[Trend]` (the Pydantic model).  
+- All upstream data (topics, tweets) must be normalized into `PostLite`/`Trend` before any scoring.  
+- Downstream modules (logger, curator, ideas) consume exactly the List returned by `build_feed`.  
+- Any new stage added must be registered here; do not call fetchers directly outside this file.
