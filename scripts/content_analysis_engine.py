@@ -572,21 +572,41 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             kaito_dir = raw_data_dir / "kaito_data"
             kaito_dir.mkdir(exist_ok=True, parents=True)
             
-            # Find trending topics file
-            trending_files = list(raw_data_dir.glob("trending_topics_*.csv"))
-            if not trending_files:
-                logger.error("No trending topics file found")
-                return None
-                
-            trending_file = max(trending_files, key=lambda f: f.stat().st_mtime)
-            df = pd.read_csv(trending_file)
-            
-            # Focus only on the top N topics by significance score (fallback to volume)
-            sort_col = "significance_score" if "significance_score" in df.columns else "tweet_volume"
-            df = df.sort_values(sort_col, ascending=False).head(self.MAX_TOPICS).reset_index(drop=True)
-            
+            # Prefer rich analysis CSV (has category/subcategory). Fallback to raw trending if missing.
+            analysis_files = list((session_dir / "analysis").glob("trending_analysis_*.csv"))
+            if analysis_files:
+                analysis_file = max(analysis_files, key=lambda f: f.stat().st_mtime)
+                logger.info(f"🔍 Using analysis file for topic selection: {analysis_file.name}")
+                df = pd.read_csv(analysis_file)
+            else:
+                trending_files = list(raw_data_dir.glob("trending_topics_*.csv"))
+                if not trending_files:
+                    logger.error("No trending topics or analysis file found")
+                    return None
+                trending_file = max(trending_files, key=lambda f: f.stat().st_mtime)
+                logger.info(f"🔍 Falling back to raw trending file: {trending_file.name}")
+                df = pd.read_csv(trending_file)
+
+            # Determine base selection of top N by significance (or volume)
+            base_sort_col = "significance_score" if "significance_score" in df.columns else "tweet_volume"
+            top_df = df.sort_values(base_sort_col, ascending=False).head(self.MAX_TOPICS)
+
+            # Always include crypto or technology topics even if they are outside the top N
+            tech_crypto_mask = (
+                (df.get("category", "") == "Technology") |
+                df["topic"].astype(str).apply(self.is_crypto_related)
+            )
+            tech_crypto_df = df[tech_crypto_mask]
+
+            combined_df = pd.concat([top_df, tech_crypto_df]).drop_duplicates(subset=["topic"]).reset_index(drop=True)
+
+            logger.info(
+                "🔗 Selected %d topics for content analysis (%d top + %d tech/crypto)",
+                len(combined_df), len(top_df), max(len(combined_df) - len(top_df), 0)
+            )
+
             all_tweets_raw = []
-            for _, row in df.iterrows():
+            for _, row in combined_df.iterrows():
                 topic = str(row['topic'])  # Convert to string explicitly
                 if self.is_crypto_related(topic):
                     tweets = self.scrape_crypto_tweets(topic, session_dir)
