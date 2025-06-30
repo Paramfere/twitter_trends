@@ -108,6 +108,20 @@ python scripts/web3_playbook_generator.py --session-id 025
 python scripts/intelligence_report_generator.py --session-id 025
 ```
 
+### 🚀 One-shot full pipeline
+
+For maximum convenience run the entire workflow (fetch → reports → optional tweet scraping) with a single command:
+
+```bash
+# lightweight – no tweet scraping
+python scripts/full_pipeline.py
+
+# include high-engagement tweet collection & filtering
+python scripts/full_pipeline.py --with-content-analysis
+```
+
+The wrapper delegates all heavy-lifting to `fetch_topics.py` while providing a memorable entry-point so you don't have to recall multiple commands.
+
 ## 📊 Report Types
 
 ### 1. 📈 Trending Analysis Report (Auto-generated)

@@ -236,8 +236,10 @@ def main():
         try:
             from scripts.velocity_report_generator import VelocityReportGenerator
             logger.info("🚀 Velocity Report…")
-            vel_res = VelocityReportGenerator().generate_velocity_report(str(analysis_file), session_name)
-            logger.info(f"✅ Velocity Report: {vel_res.get('output_file', 'Generated')}")
+            vel_gen = VelocityReportGenerator()
+            vel_report = vel_gen.generate_velocity_report(str(analysis_file), session_name)
+            vel_path = vel_gen.save_velocity_report(vel_report, session_dir)
+            logger.info(f"✅ Velocity Report: {vel_path}")
         except Exception as e:
             logger.warning(f"⚠️ Velocity Report failed: {e}")
 
@@ -245,8 +247,10 @@ def main():
         try:
             from scripts.web3_playbook_generator import Web3PlaybookGenerator
             logger.info("🌐 Web3 Playbook…")
-            playbook = Web3PlaybookGenerator().generate_playbook(str(analysis_file))
-            logger.info("✅ Web3 Playbook generated")
+            web3_gen = Web3PlaybookGenerator()
+            playbook = web3_gen.generate_playbook(str(analysis_file))
+            playbook_path = web3_gen.save_playbook(playbook, session_dir)
+            logger.info(f"✅ Web3 Playbook: {playbook_path}")
         except Exception as e:
             logger.warning(f"⚠️ Web3 Playbook failed: {e}")
 
