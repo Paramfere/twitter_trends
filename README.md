@@ -68,6 +68,30 @@ python scripts/web3_playbook_generator.py --session-id XXX
 python scripts/intelligence_report_generator.py --session-id XXX
 ```
 
+### Optional: High-Engagement Content Analysis  
+Scrape the **5 most significant trending topics** and capture **up to 10 high-engagement tweets** per topic (server-side minimum 500 likes & retweets, 50 bookmarks).  Offline filters tighten this further to likes+RT ≥ 1000 and strong author metrics.
+
+1. **One-off run on an existing session:**
+   ```bash
+   python scripts/content_analysis_engine.py data/session_043
+   ```
+
+2. **Include during data collection:**
+   ```bash
+   python scripts/fetch_topics.py --with-content-analysis
+   ```
+
+Outputs are written under the session directory:
+```
+raw_data/kaito_data/
+  ├── kaito_raw_full_<ts>.json      # full API response (≤50 tweets)
+  ├── kaito_raw_data_<ts>.json      # high-quality subset
+  ├── kaito_summary_<ts>.csv        # rich CSV summary
+content_analysis_report_<ts>.md     # markdown insight report
+```
+
+The engine never writes to the project-root `data/` folder and therefore remains Git-ignored.
+
 ### Complete Pipeline Example
 
 ```bash

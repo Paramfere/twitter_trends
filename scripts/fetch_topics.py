@@ -10,6 +10,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
+import argparse
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -178,81 +179,93 @@ def generate_analysis_report(df: pd.DataFrame, timestamp: str) -> str:
 
 def main():
     """Main execution function."""
+    # argparse moved to top-level so we can check flags early
+    parser = argparse.ArgumentParser(description="Fetch trending topics and generate reports")
+    parser.add_argument("--with-content-analysis", action="store_true",
+                        help="Include content analysis scraping (slow & extra API calls).")
+    parsed_args = parser.parse_args()
+
     try:
         # Initialize session manager
         session_manager = SessionManager()
-        
-        # Create new session
         session_name, session_dir = session_manager.create_new_session()
-        
-        logger.info(f"🚀 Starting Twitter topics fetch - {session_name}")
+
+        logger.info(f"🚀 Starting Twitter topics fetch – {session_name}")
         logger.info(f"📂 Session directory: {session_dir}")
-        
-        # Initialize components
+
         categorizer = RuleBasedCategorizer()
-        
-        # Define file paths in session directory
+
         timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         raw_file = session_dir / "raw_data" / f"trending_topics_{timestamp}.csv"
         analysis_file = session_dir / "analysis" / f"trending_analysis_{timestamp}.csv"
         report_file = session_dir / "analysis" / f"trending_report_{timestamp}.txt"
-        
-        # Fetch trending topics
-        logger.info("📡 Fetching trending topics...")
+
+        logger.info("📡 Fetching trending topics…")
         all_data = fetch_topics_multi()
-        
         if not all_data:
             logger.error("❌ No trending topics fetched")
             return
-        
-        # Create DataFrame
+
         topics_df = pd.DataFrame(all_data)
-        
-        # Save raw data
         topics_df.to_csv(raw_file, index=False)
-        logger.info(f"💾 Raw data saved to: {raw_file}")
-        
-        # Categorize topics
-        logger.info("🏷️ Categorizing topics...")
+        logger.info(f"💾 Raw data saved: {raw_file}")
+
+        logger.info("🏷️ Categorizing topics…")
         analysis_df = create_rule_based_summary(topics_df, categorizer)
-        
-        # Save analysis
         analysis_df.to_csv(analysis_file, index=False)
-        logger.info(f"💾 Analysis saved to: {analysis_file}")
-        
-        # Generate report
-        logger.info("📊 Generating analysis report...")
+        logger.info(f"💾 Analysis saved: {analysis_file}")
+
+        logger.info("📊 Generating plain-text analysis report…")
         report_content = generate_analysis_report(analysis_df, timestamp)
-        
         with open(report_file, 'w', encoding='utf-8') as f:
             f.write(report_content)
-        logger.info(f"💾 Report saved to: {report_file}")
-        
-        # Print summary
-        print("\n" + "="*60)
-        print(f"✅ SESSION COMPLETE: {session_name}")
-        print("="*60)
-        print(f"📂 Session Directory: {session_dir}")
-        print(f"📊 Topics Analyzed: {len(analysis_df)}")
-        print(f"🌍 Regions: {', '.join(analysis_df['region'].unique())}")
-        print(f"📈 Total Tweet Volume: {analysis_df['tweet_volume'].sum():,}")
-        print(f"⭐ Avg Significance: {analysis_df['significance_score'].mean():.1f}/10")
-        print("="*60)
-        
-        # Show top categories
-        category_counts = analysis_df['category'].value_counts()
-        print("🏷️ TOP CATEGORIES:")
-        for category, count in category_counts.head(5).items():
-            print(f"   {category}: {count} topics")
-        
-        print("\n📁 FILES CREATED:")
-        print(f"   📄 {raw_file.name}")
-        print(f"   📄 {analysis_file.name}")
-        print(f"   📄 {report_file.name}")
-        print("="*60)
-        
-    except Exception as e:
-        logger.error(f"❌ Error in main execution: {e}")
+
+        # -------- Optional heavy/paid reports below --------
+        logger.info("📋 Generating supplemental reports…")
+
+        # 1. Intelligence Report
+        try:
+            from scripts.intelligence_report_generator import IntelligenceReportGenerator
+            logger.info("🧠 Intelligence Report…")
+            intel_path = IntelligenceReportGenerator().generate_report(str(analysis_file))
+            logger.info(f"✅ Intelligence Report: {intel_path}")
+        except Exception as e:
+            logger.warning(f"⚠️ Intelligence Report failed: {e}")
+
+        # 2. Velocity Report
+        try:
+            from scripts.velocity_report_generator import VelocityReportGenerator
+            logger.info("🚀 Velocity Report…")
+            vel_res = VelocityReportGenerator().generate_velocity_report(str(analysis_file), session_name)
+            logger.info(f"✅ Velocity Report: {vel_res.get('output_file', 'Generated')}")
+        except Exception as e:
+            logger.warning(f"⚠️ Velocity Report failed: {e}")
+
+        # 3. Web3 Playbook
+        try:
+            from scripts.web3_playbook_generator import Web3PlaybookGenerator
+            logger.info("🌐 Web3 Playbook…")
+            playbook = Web3PlaybookGenerator().generate_playbook(str(analysis_file))
+            logger.info("✅ Web3 Playbook generated")
+        except Exception as e:
+            logger.warning(f"⚠️ Web3 Playbook failed: {e}")
+
+        # 4. Content Analysis – ONLY if flag supplied
+        if parsed_args.with_content_analysis:
+            try:
+                from scripts.content_analysis_engine import AntiGamingContentEngine
+                logger.info("📱 Content Analysis (Kaito)…")
+                report_path = AntiGamingContentEngine().run_content_analysis(session_dir)
+                logger.info(f"✅ Content Analysis: {report_path}")
+            except Exception as e:
+                logger.warning(f"⚠️ Content Analysis failed: {e}")
+        else:
+            logger.info("ℹ️ Skipping Content Analysis (use --with-content-analysis to enable)")
+
+        logger.info("🎉 Fetch session complete")
+
+    except Exception as exc:
+        logger.error(f"❌ Fatal error: {exc}")
         raise
 
 if __name__ == "__main__":
