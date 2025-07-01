@@ -72,11 +72,11 @@ def main() -> None:
     # --------------------------------------------------
     if VelocityReportGenerator is not None:
         try:
-            # Find the most recent tech_topics CSV inside session dirs
-            session_dirs = sorted((Path("data") / "session_").parent.glob("session_*/analysis/*_tech_topics.csv"))
+            # Find the most recent *raw* trending-topics CSV (all categories)
+            session_dirs = sorted((Path("data") / "session_").parent.glob("session_*/raw_data/*_trending_topics.csv"))
             if session_dirs:
                 latest_csv = max(session_dirs, key=lambda p: p.stat().st_mtime)
-                session_id = latest_csv.parts[-3]  # data/session_123/... -> session_123
+                session_id = latest_csv.parts[-3]  # data/session_123/raw_data/... -> session_123
                 vrg = VelocityReportGenerator()
                 report = vrg.generate_velocity_report(str(latest_csv), session_id)
                 output_path = Path(f"data/{session_id}/analysis/velocity_report_{session_id}.json")
@@ -84,7 +84,7 @@ def main() -> None:
                 output_path.write_text(json.dumps(report, indent=2))
                 LOGGER.info("📈 Velocity report saved to %s", output_path)
             else:
-                LOGGER.warning("No tech_topics.csv found for velocity analysis")
+                LOGGER.warning("No trending_topics.csv found for velocity analysis")
         except Exception as exc:  # noqa: WPS421
             LOGGER.error("Velocity report generation failed: %s", exc)
 
