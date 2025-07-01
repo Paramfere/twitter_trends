@@ -27,9 +27,16 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import List
+import json
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 LOGGER = logging.getLogger(__name__)
+
+# Local imports (only when velocity report generation requested)
+try:
+    from scripts.velocity_report_generator import VelocityReportGenerator  # noqa: WPS433 (allow internal import)
+except ImportError:
+    VelocityReportGenerator = None  # type: ignore[assignment]
 
 
 def _build_command(args: argparse.Namespace) -> List[str]:
@@ -59,6 +66,27 @@ def main() -> None:
     if completed.returncode != 0:
         LOGGER.error("fetch_tech_topics.py failed with exit-code %s", completed.returncode)
         sys.exit(completed.returncode)
+
+    # --------------------------------------------------
+    # Velocity / momentum report (always run if module available)
+    # --------------------------------------------------
+    if VelocityReportGenerator is not None:
+        try:
+            # Find the most recent tech_topics CSV inside session dirs
+            session_dirs = sorted((Path("data") / "session_").parent.glob("session_*/analysis/*_tech_topics.csv"))
+            if session_dirs:
+                latest_csv = max(session_dirs, key=lambda p: p.stat().st_mtime)
+                session_id = latest_csv.parts[-3]  # data/session_123/... -> session_123
+                vrg = VelocityReportGenerator()
+                report = vrg.generate_velocity_report(str(latest_csv), session_id)
+                output_path = Path(f"data/{session_id}/analysis/velocity_report_{session_id}.json")
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(json.dumps(report, indent=2))
+                LOGGER.info("📈 Velocity report saved to %s", output_path)
+            else:
+                LOGGER.warning("No tech_topics.csv found for velocity analysis")
+        except Exception as exc:  # noqa: WPS421
+            LOGGER.error("Velocity report generation failed: %s", exc)
 
     LOGGER.info("🎉 Tech-only pipeline finished successfully")
 
