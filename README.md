@@ -53,6 +53,24 @@ APIFY_API_TOKEN=your_apify_api_token_here
 
 ## 🚀 Quick Start
 
+### One-line shortcut commands
+
+After an editable install (`pip install -e .`) three convenience commands are available globally:
+
+```bash
+# All categories + reports + tweets
+fere-general
+
+# Tech-focused (top-5 tech topics + tweets)
+fere-tech
+
+# Every tech topic + tweets (may be slow)
+fere-tech-all
+```
+
+The older `python scripts/*.py …` invocations still work; they are just wrapped by the
+commands above for easier recall.
+
 ### Basic Usage
 
 1. **Fetch trending data:**
