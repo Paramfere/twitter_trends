@@ -2,6 +2,7 @@
 
 import logging
 import time
+import re
 from typing import Dict, List, Set
 from dataclasses import dataclass
 from datetime import datetime
@@ -29,6 +30,17 @@ class RuleBasedCategorizer:
         """Initialize the rule-based categorizer."""
         self.logger = logging.getLogger(__name__)
         self._setup_rules()
+        # Load token sets once
+        self.token_symbols, self.token_names = self._load_token_sets()
+        self.ENABLE_TICKER_DETECT = True
+        self.GENERIC_WORD_BLACKLIST = {
+            'trump', 'america', 'iran', 'europe', 'lgbtq', 'messiah', 'lakers', 'tesla', 'tiktok',
+            'union', 'create', 'build', 'peter', 'elon', 'messi', 'osaka', 'fin', 'finn', 'luke', 'lebron'
+        }
+        # Symbols missing from CoinGecko list but relevant for our monitoring
+        self.MANUAL_TOKEN_SYMBOLS: Set[str] = {
+            'vader', 'cabal', 'monad', 'core', 'coredao'
+        }
     
     def _setup_rules(self):
         """Initialize all categorization rules and keyword mappings."""
@@ -64,19 +76,38 @@ class RuleBasedCategorizer:
             'crypto': ['bitcoin', 'btc', 'ethereum', 'crypto', 'blockchain', 'binance', 'coinbase'],
             'ai': ['chatgpt', 'ai', 'claude', 'openai', 'machine learning', 'neural'],
             'companies': ['apple', 'google', 'microsoft', 'tesla', 'meta', 'amazon', 'netflix'],
-            'products': ['iphone', 'android', 'windows', 'ios', 'app', 'software', 'update']
+            'products': ['iphone', 'android', 'windows', 'ios', 'app', 'software', 'update'],
+            'buzzwords': ['saas', 'devops', 'cloud', 'edge', 'big data']
         }
         
-        # Web3/Crypto specific keywords
+        # Web3/Crypto specific keywords (removed ambiguous short tokens like 'vr', 'ar')
         self.WEB3_KEYWORDS = {
             'defi': ['defi', 'uniswap', 'compound', 'aave', 'yield farming', 'liquidity', 'protocol'],
             'nft': ['nft', 'opensea', 'bored ape', 'pfp', 'mint', 'collection', 'rare'],
-            'blockchain': ['blockchain', 'ethereum', 'solana', 'polygon', 'avalanche', 'layer2'],
-            'metaverse': ['metaverse', 'vr', 'ar', 'virtual world', 'sandbox', 'decentraland'],
+            'blockchain': ['blockchain', 'ethereum', 'solana', 'polygon', 'avalanche', 'layer2', 'monad'],
+            'metaverse': ['metaverse', 'virtual world', 'sandbox', 'decentraland', 'vr ', ' ar '],
             'crypto_trading': ['binance', 'coinbase', 'ftx', 'trading', 'pump', 'dump', 'hodl'],
             'web3_social': ['lens protocol', 'farcaster', 'friend.tech', 'social token'],
             'gamefi': ['gamefi', 'play to earn', 'p2e', 'gaming token', 'nft game'],
-            'dao': ['dao', 'governance', 'voting', 'proposal', 'community token']
+            'dao': ['dao', 'governance', 'voting', 'proposal', 'community token', 'coredao'],
+            # Layer 1 base chains
+            'layer1': [
+                'bitcoin', 'ethereum', 'solana', 'avalanche', 'cardano', 'bnb chain', 'near', 'sui', 'aptos',
+                'tezos', 'algorand', 'cosmos', 'fantom', 'hedera', 'ton', 'sei', 'celestia', 'conflux', 'nervos'
+            ],
+            # Layer 2 scaling networks
+            'layer2': [
+                'arbitrum', 'optimism', 'base', 'starknet', 'zksync', 'scroll', 'linea', 'mantle', 'loopring',
+                'immutable', 'metis', 'boba', 'dydx', 'polygon zk', 'aztec'
+            ],
+            # Popular crypto wallets/services
+            'wallets': [
+                'metamask', 'trust wallet', 'phantom wallet', 'rabby', 'keplr', 'coin98', 'x defi', 'okx wallet'
+            ],
+            # Crypto / degen slang
+            'slang': [
+                'degen', 'wagmi', 'ngmi', 'gm ', 'rekt', 'airdrop', 'moon', 'pump', 'dump'
+            ]
         }
         
         # Crypto influence indicators (people/entities that move crypto markets)
@@ -201,6 +232,15 @@ class RuleBasedCategorizer:
     def _categorize_topic(self, topic_lower: str, tweet_volume: int) -> tuple:
         """Determine category and subcategory for a topic."""
         
+        # 0) Direct match against known token names / symbols (allow leading '#')
+        stripped = topic_lower.lstrip('#')
+        if self._is_token_symbol(stripped):
+            return 'Technology', 'Crypto', 0.9
+        
+        # 0a) Exact token name match (case-insensitive) excluding common words
+        if stripped in self.token_names and stripped not in self.GENERIC_WORD_BLACKLIST:
+            return 'Technology', 'Crypto', 0.85
+        
         # Check hashtags first
         if topic_lower.startswith('#'):
             if any(word in topic_lower for word in ['fanfest', 'concert', 'tour']):
@@ -216,32 +256,36 @@ class RuleBasedCategorizer:
         
         # Check entertainment keywords
         for subcat, keywords in self.ENTERTAINMENT_KEYWORDS.items():
-            if any(keyword in topic_lower for keyword in keywords):
+            if any(self._keyword_in_topic(topic_lower, keyword) for keyword in keywords):
                 return 'Entertainment', subcat.replace('_', ' ').title(), 0.8
         
         # Check politics keywords
         for subcat, keywords in self.POLITICS_KEYWORDS.items():
-            if any(keyword in topic_lower for keyword in keywords):
+            if any(self._keyword_in_topic(topic_lower, keyword) for keyword in keywords):
                 return 'Politics', subcat.replace('_', ' ').title(), 0.8
         
         # Check sports keywords
         for subcat, keywords in self.SPORTS_KEYWORDS.items():
-            if any(keyword in topic_lower for keyword in keywords):
+            if any(self._keyword_in_topic(topic_lower, keyword) for keyword in keywords):
                 return 'Sports', subcat.replace('_', ' ').title(), 0.8
         
         # Check technology keywords
         for subcat, keywords in self.TECHNOLOGY_KEYWORDS.items():
-            if any(keyword in topic_lower for keyword in keywords):
+            if any(self._keyword_in_topic(topic_lower, keyword) for keyword in keywords):
                 return 'Technology', subcat.replace('_', ' ').title(), 0.8
         
         # Check web3 keywords
         for subcat, keywords in self.WEB3_KEYWORDS.items():
-            if any(keyword in topic_lower for keyword in keywords):
+            if any(self._keyword_in_topic(topic_lower, keyword) for keyword in keywords):
                 return 'Technology', subcat.replace('_', ' ').title(), 0.8
+        
+        # Fallback: topic names ending with 'dao' are likely DAO projects
+        if topic_lower.endswith('dao') and len(topic_lower) > 3:
+            return 'Technology', 'Crypto', 0.75
         
         # Check news keywords
         for subcat, keywords in self.NEWS_KEYWORDS.items():
-            if any(keyword in topic_lower for keyword in keywords):
+            if any(self._keyword_in_topic(topic_lower, keyword) for keyword in keywords):
                 return 'News/Events', subcat.replace('_', ' ').title(), 0.7
         
         # Check geographic locations
@@ -368,7 +412,7 @@ class RuleBasedCategorizer:
         """Analyze Web3/crypto relevance for a topic."""
         if category == 'Technology':
             for subcat, keywords in self.WEB3_KEYWORDS.items():
-                if any(keyword in topic_lower for keyword in keywords):
+                if any(self._keyword_in_topic(topic_lower, keyword) for keyword in keywords):
                     return subcat.replace('_', ' ').title()
         return "none"
     
@@ -390,4 +434,53 @@ class RuleBasedCategorizer:
                 return "standard"
             else:
                 return "disruptive"
-        return "standard" 
+        return "standard"
+    
+    # ------------------- Keyword helper -------------------
+    def _keyword_in_topic(self, topic_lower: str, keyword: str) -> bool:
+        """Return True if keyword matches topic as whole word / phrase (case-insensitive)."""
+        keyword = keyword.lower()
+        if ' ' in keyword:
+            # Multi-word phrase – simple substring match after lowercase
+            return keyword in topic_lower
+        pattern = rf"\b{re.escape(keyword)}\b"
+        return re.search(pattern, topic_lower) is not None 
+
+    # -----------------------------------------------------
+    # Token list loader (CoinGecko CSV previously generated)
+    # -----------------------------------------------------
+    def _load_token_sets(self) -> tuple[Set[str], Set[str]]:
+        """Return (symbols_set, names_set) from cached CSV in data/ ."""
+        symbols: Set[str] = set()
+        names: Set[str] = set()
+        try:
+            from pathlib import Path
+            import pandas as pd
+
+            csv_files = sorted(Path('data').glob('token_list_*.csv'))
+            if not csv_files:
+                self.logger.warning("No token list CSV found in data/. Run sync_tokens.py first.")
+                return symbols, names
+            latest = csv_files[-1]
+            df = pd.read_csv(latest)
+            symbols = set(df['symbol'].str.lower().tolist())
+            names = set(df['name'].str.lower().tolist())
+            self.logger.info("Loaded %d token symbols from %s", len(symbols), latest)
+        except Exception as exc:
+            self.logger.warning("Could not load token list: %s", exc)
+        return symbols, names 
+
+    # ------------------- Token symbol helper -------------------
+    TOKEN_TICKER_RE = re.compile(r"^\$?[A-Z0-9]{2,6}$")
+
+    def _is_token_symbol(self, topic_raw: str) -> bool:
+        """Return True if topic looks like a known token symbol (uppercase 2-6 chars or $SYMBOL)."""
+        topic_stripped = topic_raw.strip()
+        # Perform case-insensitive ticker detection by evaluating the upper-cased version
+        candidate = topic_stripped.upper()
+        if not self.TOKEN_TICKER_RE.fullmatch(candidate):
+            return False
+
+        symbol = candidate.lstrip('$')  # remove leading $
+        sym_lower = symbol.lower()
+        return sym_lower in self.token_symbols or sym_lower in self.MANUAL_TOKEN_SYMBOLS 

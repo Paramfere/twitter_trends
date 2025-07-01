@@ -8,9 +8,9 @@ Implements sophisticated quality metrics to filter out manipulated content
 import os
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Set
 import pandas as pd
 import json
 import re
@@ -44,13 +44,13 @@ logger = get_logger()
 class AntiGamingContentEngine:
     """Advanced content analysis engine with anti-gaming metrics."""
     
-    HIGH_ENGAGEMENT_THRESHOLD = 1000  # likes + retweets
+    HIGH_ENGAGEMENT_THRESHOLD = 5000  # Reduced from 8000 to 5000
     MAX_TOPICS = 5  # only analyse top 5 trending topics
     TWEETS_PER_TOPIC = 10  # fetch max 10 tweets per topic per API call
     # Additional hard filters
     MIN_AUTHOR_FOLLOWERS = 10_000
     MIN_FOLLOWER_RATIO = 2.0  # followers / following
-    MIN_BOOKMARKS = 50  # ensures tweet has meaningful saves
+    MIN_BOOKMARKS = 300  # Reduced from 500 to 300
     
     def __init__(self):
         """Initialize the Anti-Gaming Content Analysis Engine."""
@@ -250,90 +250,124 @@ class AntiGamingContentEngine:
             
             processed_tweets.append(processed_tweet)
         
+        logger.info(f"Processed {len(processed_tweets)}/{len(items)} tweets for topic '{topic}'")
         return processed_tweets
 
-    def scrape_crypto_tweets(self, topic: str, session_dir: Path) -> List[Dict[str, Any]]:
-        """Scrape crypto tweets with inclusive filtering (all crypto content)."""
-        start = time.time()
-        try:
-            search_term = topic.replace("#", "").strip()
-            
-            payload = {
-                "searchTerms": [search_term],
-                "lang": "en",
-                "maxItems": self.TWEETS_PER_TOPIC,
-                "queryType": "Top",
-                "filter:has_engagement": True,
-                "min_retweets": 500,
-                "min_faves": 500,
-                "min_bookmarks": self.MIN_BOOKMARKS,
-            }
-            
-            logger.info(f"🔗 Scraping crypto tweets for: {topic}")
-            logger.info(f"Using Apify token: {os.getenv('APIFY_TOKEN')}")
-            
-            run = self.client.actor("kaitoeasyapi/twitter-x-data-tweet-scraper-pay-per-result-cheapest").call(
-                run_input=payload, 
-                timeout_secs=300
-            )
-            
-            logger.info(f"Got Apify run response: {run}")
-            items = self.client.dataset(run["defaultDatasetId"]).list_items().items
-            logger.info(f"Got {len(items)} items from Kaito API")
-            
-            # Process tweets
-            processed_tweets = self._process_tweets(items, topic, "crypto")
-            
-            logger.info(f"Processed {len(processed_tweets)} crypto tweets for {topic}")
-            logger.info("Crypto scraping completed in %.1fs", time.time() - start)
-            
-            return processed_tweets
-            
-        except Exception as e:
-            logger.error(f"Error scraping crypto tweets: {str(e)}")
-            logger.error(f"Exception type: {type(e)}")
-            logger.error(f"Exception details: {str(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
+    def scrape_crypto_tweets(self, topic: str, session_dir: Path) -> List[Dict]:
+        """Scrape crypto-related tweets for a given topic."""
+        logger.info(f"🔗 Scraping crypto tweets for: {topic}")
+        
+        # Use Apify token from environment
+        apify_token = os.getenv("APIFY_TOKEN")
+        if not apify_token:
+            logger.warning("No APIFY_TOKEN found in environment")
             return []
+            
+        logger.info(f"Using Apify token: {apify_token}")
+        
+        # Set up Apify client
+        client = ApifyClient(apify_token)
+        
+        # Configure the actor input
+        run_input = {
+            "searchTerms": [topic],
+            "lang": "en",
+            "maxItems": self.TWEETS_PER_TOPIC,
+            "maxItemsPerPage": self.TWEETS_PER_TOPIC,
+            "queryType": "Top",
+            "filter:has_engagement": True,
+            "min_retweets": 3000,
+            "min_faves": 5000,
+            "min_bookmarks": 500,
+            "filter:blue_verified": False,
+            "filter:nativeretweets": False,
+            "include:nativeretweets": False,
+            "filter:replies": False,
+            "filter:quote": False,
+        }
+        
+        # Run the actor and wait for it to finish
+        start_time = time.time()
+        run = client.actor("kaitoeasyapi/twitter-x-data-tweet-scraper-pay-per-result-cheapest").call(run_input=run_input, timeout_secs=300)
+        
+        logger.info(f"Got Apify run response: {run}")
+        
+        # Fetch and process the results
+        items = client.dataset(run["defaultDatasetId"]).list_items().items
+        logger.info(f"Got {len(items)} items from Kaito API (requested {self.TWEETS_PER_TOPIC})")
+        
+        # Process tweets
+        processed_tweets = []
+        for i, tweet in enumerate(items):
+            # Add the search term to each tweet
+            tweet['search_term'] = topic
+            processed_tweets.append(tweet)
+            
+        logger.info(f"Processed {len(processed_tweets)}/{len(items)} tweets for topic '{topic}'")
+        
+        end_time = time.time()
+        logger.info(f"Processed {len(processed_tweets)} crypto tweets for {topic}")
+        logger.info(f"Crypto scraping completed in {end_time - start_time:.1f}s")
+        
+        return processed_tweets
 
     def scrape_general_tweets(self, topic: str, session_dir: Path) -> List[Dict[str, Any]]:
-        """Scrape general tweets with strict quality filtering."""
-        start = time.time()
-        try:
-            search_term = topic.replace("#", "").strip()
-            
-            payload = {
-                "searchTerms": [search_term],
-                "lang": "en",
-                "maxItems": self.TWEETS_PER_TOPIC,
-                "queryType": "Top",
-                "filter:has_engagement": True,
-                "min_retweets": 500,
-                "min_faves": 500,
-                "min_bookmarks": self.MIN_BOOKMARKS,
-            }
-            
-            logger.info(f"🔗 Scraping general tweets for: {topic}")
-            
-            run = self.client.actor("kaitoeasyapi/twitter-x-data-tweet-scraper-pay-per-result-cheapest").call(
-                run_input=payload,
-                timeout_secs=300
-            )
-            
-            items = self.client.dataset(run["defaultDatasetId"]).list_items().items
-            
-            # Process tweets
-            processed_tweets = self._process_tweets(items, topic, "general")
-            
-            logger.info(f"Processed {len(processed_tweets)} general tweets for {topic}")
-            logger.info("General scraping completed in %.1fs", time.time() - start)
-            
-            return processed_tweets
-            
-        except Exception as e:
-            logger.error(f"Error scraping general tweets: {e}")
+        """Scrape general tweets with more selective filtering."""
+        logger.info(f"🔗 Scraping general tweets for: {topic}")
+        
+        # Use Apify token from environment
+        apify_token = os.getenv("APIFY_TOKEN")
+        if not apify_token:
+            logger.warning("No APIFY_TOKEN found in environment")
             return []
+            
+        logger.info(f"Using Apify token: {apify_token}")
+        
+        # Set up Apify client
+        client = ApifyClient(apify_token)
+        
+        # Configure the actor input
+        run_input = {
+            "searchTerms": [topic],
+            "lang": "en",
+            "maxItems": self.TWEETS_PER_TOPIC,
+            "maxItemsPerPage": self.TWEETS_PER_TOPIC,
+            "queryType": "Top",
+            "filter:has_engagement": True,
+            "min_retweets": 3000,
+            "min_faves": 5000,
+            "min_bookmarks": 500,
+            "filter:blue_verified": False,
+            "filter:nativeretweets": False,
+            "include:nativeretweets": False,
+            "filter:replies": False,
+            "filter:quote": False,
+        }
+        
+        # Run the actor and wait for it to finish
+        start_time = time.time()
+        run = client.actor("kaitoeasyapi/twitter-x-data-tweet-scraper-pay-per-result-cheapest").call(run_input=run_input, timeout_secs=300)
+        
+        logger.info(f"Got Apify run response: {run}")
+        
+        # Fetch and process the results
+        items = client.dataset(run["defaultDatasetId"]).list_items().items
+        logger.info(f"Got {len(items)} items from Kaito API (requested {self.TWEETS_PER_TOPIC})")
+        
+        # Process tweets
+        processed_tweets = []
+        for i, tweet in enumerate(items):
+            # Add the search term to each tweet
+            tweet['search_term'] = topic
+            processed_tweets.append(tweet)
+            
+        logger.info(f"Processed {len(processed_tweets)}/{len(items)} tweets for topic '{topic}'")
+        
+        end_time = time.time()
+        logger.info(f"Processed {len(processed_tweets)} general tweets for {topic}")
+        logger.info(f"General scraping completed in {end_time - start_time:.1f}s")
+        
+        return processed_tweets
     
     def identify_priority_trends(self, analysis_csv_path: str) -> Tuple[List[Dict], List[Dict]]:
         """Separate crypto and general trends based on content."""
@@ -395,7 +429,7 @@ class AntiGamingContentEngine:
         # Gaming detection metrics
         suspicious_patterns = {
             'low_quality_accounts': len([t for t in tweets if t['author_quality_score'] < 30]),
-            'high_following_accounts': len([t for t in tweets if t['author_following'] > 50000]),
+            'high_following_accounts': len([t for t in tweets if t['author_following'] > 5000]),
             'new_accounts': len([t for t in tweets if t['quality_metrics'].get('account_age_days', 0) < 90]),
             'unverified_high_engagement': len([
                 t for t in tweets 
@@ -598,42 +632,56 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             )
             tech_crypto_df = df[tech_crypto_mask]
 
-            combined_df = pd.concat([top_df, tech_crypto_df]).drop_duplicates(subset=["topic"]).reset_index(drop=True)
+            # Combine and remove duplicates
+            combined_df = pd.concat([top_df, tech_crypto_df])
+            combined_df = combined_df.drop_duplicates(subset="topic")
+            combined_df = combined_df.reset_index(drop=True)
+            
+            # Limit to MAX_TOPICS total
+            if len(combined_df) > self.MAX_TOPICS:
+                logger.info(f"Limiting from {len(combined_df)} to {self.MAX_TOPICS} topics")
+                combined_df = combined_df.head(self.MAX_TOPICS)
 
             logger.info(
-                "🔗 Selected %d topics for content analysis (%d top + %d tech/crypto)",
-                len(combined_df), len(top_df), max(len(combined_df) - len(top_df), 0)
+                f"🔗 Selected {len(combined_df)} topics for content analysis"
             )
+            
+            # Track expected vs actual tweet counts - now expecting up to 50 tweets per topic
+            expected_tweet_count = len(combined_df) * 50
+            logger.info(f"Expected tweet count: up to {expected_tweet_count} ({len(combined_df)} topics × 50 tweets max per topic)")
 
-            all_tweets_raw = []
+            all_tweets_raw: List[Dict] = []
+            all_tweets_processed: List[Dict] = []
+            processed_topics: Set[str] = set()
+            
             for _, row in combined_df.iterrows():
                 topic = str(row['topic'])  # Convert to string explicitly
-                if self.is_crypto_related(topic):
-                    tweets = self.scrape_crypto_tweets(topic, session_dir)
+                
+                # Skip duplicate topics
+                if topic in processed_topics:
+                    logger.info(f"Skipping duplicate topic: {topic}")
+                    continue
+                    
+                processed_topics.add(topic)
+                
+                is_crypto = self.is_crypto_related(topic) or row['crypto_connection'] == 'direct'
+                if is_crypto:
+                    tweets_raw = self.scrape_crypto_tweets(topic, session_dir)
+                    content_type = "Crypto"
                 else:
-                    tweets = self.scrape_general_tweets(topic, session_dir)
-                all_tweets_raw.extend(tweets)
+                    tweets_raw = self.scrape_general_tweets(topic, session_dir)
+                    content_type = "Tech"
+
+                # Extend raw list
+                all_tweets_raw.extend(tweets_raw)
+
+                # Convert to standardized structure for downstream processing
+                processed = self._process_tweets(tweets_raw, topic, content_type)
+                all_tweets_processed.extend(processed)
             
-            # Apply offline filtering on the aggregated tweets
-            high_quality = []
-            for t in all_tweets_raw:
-                engagement = t.get('like_count', 0) + t.get('retweet_count', 0)
-                if engagement < self.HIGH_ENGAGEMENT_THRESHOLD:
-                    continue
-                followers = t.get('author_followers', 0)
-                following = t.get('author_following', 0)
-                follower_ratio = (followers / following) if following else float('inf')
-                if followers < self.MIN_AUTHOR_FOLLOWERS or follower_ratio < self.MIN_FOLLOWER_RATIO:
-                    continue
-                if t.get('bookmark_count', 0) < self.MIN_BOOKMARKS:
-                    continue
-                high_quality.append(t)
+            logger.info(f"Total raw tweets collected: {len(all_tweets_raw)} (from {len(processed_topics)} topics)")
             
-            if not high_quality:
-                logger.warning("No tweets collected")
-                return None
-            
-            # Save full raw data separately
+            # Save full raw data
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             kaito_dir = session_dir / "raw_data" / "kaito_data"
             kaito_dir.mkdir(exist_ok=True, parents=True)
@@ -641,10 +689,22 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             with open(raw_full_file, 'w') as f:
                 json.dump(all_tweets_raw, f, indent=2, default=str)
             logger.info(f"Saved full raw Kaito data to {raw_full_file} (total {len(all_tweets_raw)} tweets)")
+            
+            # Rank processed tweets by engagement (likes + retweets)
+            ranked_tweets = sorted(all_tweets_processed, key=lambda t: (
+                t.get('like_count', 0) + t.get('retweet_count', 0)
+            ), reverse=True)
+            
+            # Use all tweets for analysis, no filtering or limiting
+            high_quality = ranked_tweets
+            
+            if not high_quality:
+                logger.warning("No tweets collected")
+                return None
 
-            # Save high-quality subset and summary
+            # Save all tweets and summary
             output_file = self.save_tweets_data(high_quality, session_dir)
-            logger.info(f"Saved {len(high_quality)} high-quality tweets to {output_file}")
+            logger.info(f"Saved {len(high_quality)} tweets to {output_file}")
             
             # Generate content report
             report_file = self.generate_content_report(session_dir, high_quality)
@@ -655,6 +715,290 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         except Exception as e:
             logger.error(f"Error in content analysis: {e}")
             return None
+
+    def run_tech_content_analysis(self, session_dir: Path, tech_df: pd.DataFrame) -> Optional[str]:
+        """Run content analysis specifically for tech and web3 topics.
+        
+        Args:
+            session_dir: Path to the session directory
+            tech_df: DataFrame containing tech and web3 topics
+            
+        Returns:
+            Path to the generated report or None if failed
+        """
+        try:
+            # Create raw_data and kaito_data directories
+            raw_data_dir = session_dir / "raw_data"
+            raw_data_dir.mkdir(exist_ok=True, parents=True)
+            
+            kaito_dir = raw_data_dir / "kaito_data"
+            kaito_dir.mkdir(exist_ok=True, parents=True)
+            
+            # Select top tech topics for content analysis
+            top_tech_df = tech_df.sort_values('significance_score', ascending=False).head(self.MAX_TOPICS)
+
+            logger.info(
+                f"🔗 Selected {len(top_tech_df)} tech topics for content analysis"
+            )
+            
+            # Track expected vs actual tweet counts
+            expected_tweet_count = len(top_tech_df) * 50
+            logger.info(f"Expected tweet count: up to {expected_tweet_count} ({len(top_tech_df)} topics × 50 tweets max per topic)")
+
+            all_tweets_raw: List[Dict] = []
+            all_tweets_processed: List[Dict] = []
+            processed_topics: Set[str] = set()
+            
+            for _, row in top_tech_df.iterrows():
+                topic = str(row['topic'])  # Convert to string explicitly
+                
+                # Skip duplicate topics
+                if topic in processed_topics:
+                    logger.info(f"Skipping duplicate topic: {topic}")
+                    continue
+                    
+                processed_topics.add(topic)
+                
+                is_crypto = self.is_crypto_related(topic) or row['crypto_connection'] == 'direct'
+                if is_crypto:
+                    tweets_raw = self.scrape_crypto_tweets(topic, session_dir)
+                    content_type = "Crypto"
+                else:
+                    tweets_raw = self.scrape_general_tweets(topic, session_dir)
+                    content_type = "Tech"
+
+                # Extend raw list
+                all_tweets_raw.extend(tweets_raw)
+
+                # Convert to standardized structure for downstream processing
+                processed = self._process_tweets(tweets_raw, topic, content_type)
+                all_tweets_processed.extend(processed)
+            
+            logger.info(f"Total raw tweets collected: {len(all_tweets_raw)} (from {len(processed_topics)} topics)")
+            
+            # Save full raw data
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            kaito_dir = session_dir / "raw_data" / "kaito_data"
+            kaito_dir.mkdir(exist_ok=True, parents=True)
+            raw_full_file = kaito_dir / f"kaito_tech_raw_full_{timestamp}.json"
+            with open(raw_full_file, 'w') as f:
+                json.dump(all_tweets_raw, f, indent=2, default=str)
+            logger.info(f"Saved full raw Kaito data to {raw_full_file} (total {len(all_tweets_raw)} tweets)")
+            
+            # Rank processed tweets by engagement (likes + retweets)
+            ranked_tweets = sorted(all_tweets_processed, key=lambda t: (
+                t.get('like_count', 0) + t.get('retweet_count', 0)
+            ), reverse=True)
+            
+            # Use all tweets for analysis, no filtering or limiting
+            high_quality = ranked_tweets
+            
+            if not high_quality:
+                logger.warning("No tweets collected")
+                return None
+
+            # Save all tweets and summary
+            output_file = self.save_tech_tweets_data(high_quality, session_dir, timestamp)
+            logger.info(f"Saved {len(high_quality)} tweets to {output_file}")
+            
+            # Generate tech content report
+            report_file = self.generate_tech_content_report(session_dir, high_quality, timestamp)
+            if report_file:
+                logger.info(f"Generated tech content report: {report_file}")
+                return str(report_file)
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in tech content analysis: {e}")
+            return None
+            
+    def save_tech_tweets_data(self, tweets: List[Dict], session_dir: Path, timestamp: str) -> Path:
+        """Save tech tweets data to files."""
+        # Save the processed data
+        kaito_dir = session_dir / "raw_data" / "kaito_data"
+        kaito_dir.mkdir(exist_ok=True, parents=True)
+        
+        # Save full data
+        output_file = kaito_dir / f"kaito_tech_data_{timestamp}.json"
+        with open(output_file, 'w') as f:
+            json.dump(tweets, f, indent=2, default=str)
+        
+        # Create summary CSV
+        summary_rows = []
+        for tweet in tweets:
+            tweet_text = tweet.get('text', '').replace('\n', ' ').replace('\r', '')
+            summary_rows.append({
+                'author_username': tweet.get('author_username', ''),
+                'author_name': tweet.get('author_name', ''),
+                'author_followers': tweet.get('author_followers', tweet.get('author_followers_count', 0)),
+                'author_following': tweet.get('author_following', tweet.get('author_following_count', 0)),
+                'tweet_text': tweet_text[:100] + ('...' if len(tweet_text) > 100 else ''),
+                'like_count': tweet.get('like_count', 0),
+                'retweet_count': tweet.get('retweet_count', 0),
+                'reply_count': tweet.get('reply_count', 0),
+                'bookmark_count': tweet.get('bookmark_count', 0),
+                'created_at': tweet.get('created_at', ''),
+                'lang': tweet.get('language', tweet.get('lang', '')),
+                'quality_score': tweet.get('author_quality_score', None)
+            })
+        
+        summary_df = pd.DataFrame(summary_rows)
+        summary_file = kaito_dir / f"kaito_tech_summary_{timestamp}.csv"
+        summary_df.to_csv(summary_file, index=False)
+        
+        logger.info(f"📊 Total raw items collected: {len(tweets)}")
+        logger.info(f"📋 Saved summary to {summary_file}")
+        
+        return output_file
+        
+    def generate_tech_content_report(self, session_dir: Path, tweets: List[Dict], timestamp: str) -> Optional[Path]:
+        """Generate a tech-focused content analysis report."""
+        if not tweets:
+            return None
+            
+        # Collect quality scores directly from processed tweet objects
+        quality_scores = [tweet.get('author_quality_score', 0) for tweet in tweets if isinstance(tweet.get('author_quality_score', 0), (int, float))]
+        
+        if not quality_scores:
+            logger.warning("No valid quality scores calculated")
+            return None
+            
+        high_quality = sum(1 for score in quality_scores if score >= 70)
+        medium_quality = sum(1 for score in quality_scores if 40 <= score < 70)
+        low_quality = sum(1 for score in quality_scores if score < 40)
+        
+        # Calculate engagement metrics
+        total_engagement = sum(tweet.get('like_count', 0) + tweet.get('retweet_count', 0) for tweet in tweets)
+        avg_engagement = total_engagement / len(tweets) if tweets else 0
+        
+        # Group by topics
+        topic_tweets = {}
+        for tweet in tweets:
+            topic = tweet.get('search_term', 'Unknown')
+            if topic not in topic_tweets:
+                topic_tweets[topic] = []
+            topic_tweets[topic].append(tweet)
+        
+        # Generate report content
+        report_lines = [
+            "# 🛡️ Tech & Web3 Content Analysis Report",
+            f"Generated: {timestamp.replace('_', ' ')}",
+            "",
+            "## 📊 Executive Summary",
+            f"- **Total Tweets Analyzed**: {len(tweets)}",
+            f"- **Crypto-Related Tweets**: {sum(1 for tweet in tweets if self.is_crypto_related(tweet.get('search_term', '')))}",
+            f"- **Tech-Related Tweets**: {len(tweets) - sum(1 for tweet in tweets if self.is_crypto_related(tweet.get('search_term', '')))}",
+            f"- **Average Quality Score**: {sum(quality_scores)/len(quality_scores):.2f}/100",
+            f"- **Total Engagement**: {total_engagement:,}",
+            f"- **Average Engagement per Tweet**: {avg_engagement:.1f}",
+            "",
+            "## 🚨 Gaming Detection Results",
+            "",
+            "### Quality Distribution",
+            f"- **High Quality (70-100)**: {high_quality} tweets",
+            f"- **Medium Quality (40-69)**: {medium_quality} tweets",
+            f"- **Low Quality (0-39)**: {low_quality} tweets",
+            "",
+            "### Suspicious Patterns Detected",
+            f"- **Low Quality Accounts**: {sum(1 for tweet in tweets if isinstance(tweet.get('author_quality_score', 0), (int, float)) and tweet.get('author_quality_score', 0) < 30)} tweets",
+            f"- **High Following Accounts**: {sum(1 for tweet in tweets if tweet.get('author_following', 0) > 5000)} tweets",
+            f"- **New Accounts (<90 days)**: {sum(1 for tweet in tweets if self.is_new_account(tweet))} tweets",
+            f"- **Unverified High Engagement**: {sum(1 for tweet in tweets if not tweet.get('author_is_blue_verified', False) and (tweet.get('like_count', 0) + tweet.get('retweet_count', 0)) > 10000)} tweets",
+            "",
+            "## 📈 Content Analysis by Topic",
+            "",
+        ]
+        
+        # Add topic-specific sections
+        for topic, topic_tweet_list in topic_tweets.items():
+            # Skip if no tweets
+            if not topic_tweet_list:
+                continue
+                
+            # Calculate topic metrics
+            topic_quality_scores = [tweet.get('author_quality_score', 0) for tweet in topic_tweet_list if isinstance(tweet.get('author_quality_score', 0), (int, float))]
+            
+            if not topic_quality_scores:
+                continue
+                
+            topic_quality = sum(topic_quality_scores) / len(topic_quality_scores)
+            topic_engagement = sum(tweet.get('like_count', 0) + tweet.get('retweet_count', 0) for tweet in topic_tweet_list)
+            
+            # Find top tweet by engagement
+            top_tweet = max(topic_tweet_list, key=lambda t: t.get('like_count', 0) + t.get('retweet_count', 0))
+            top_engagement = top_tweet.get('like_count', 0) + top_tweet.get('retweet_count', 0)
+            
+            # Determine if crypto or general
+            topic_type = "Crypto" if self.is_crypto_related(topic) else "Tech"
+            
+            report_lines.extend([
+                f"### 📊 {topic} ({topic_type})",
+                f"- **Tweets**: {len(topic_tweet_list)}",
+                f"- **Avg Quality Score**: {topic_quality:.1f}/100",
+                f"- **Total Engagement**: {topic_engagement:,}",
+                f"- **Top Tweet**: {top_engagement:,} engagements",
+                "",
+            ])
+        
+        # Add explanation section
+        report_lines.extend([
+            "## 🔍 Quality Metrics Explained",
+            "",
+            "### Quality Score Components (0-100):",
+            "- **Follower-to-Following Ratio** (30%): Higher ratios indicate organic growth",
+            "- **Account Age** (20%): Older accounts are less likely to be fake",
+            "- **Verification Status** (20%): Verified accounts have higher credibility",
+            "- **Follower Count Legitimacy** (15% of score)",
+            "- **Following Count Reasonableness** (15% of score)",
+            "",
+            "### Content Strategy:",
+            "- **Crypto Content**: All crypto-related trends included regardless of quality",
+            "- **Tech Content**: Focus on emerging technologies and industry trends",
+            "- **Gaming Protection**: Multiple metrics used to detect manipulated engagement",
+            "",
+            "---",
+            "*Report generated by Anti-Gaming Content Analysis Engine*",
+            ""
+        ])
+        
+        # Write report to file
+        report_text = "\n".join(report_lines)
+        report_file = session_dir / f"tech_content_analysis_report_{timestamp}.md"
+        with open(report_file, 'w') as f:
+            f.write(report_text)
+            
+        return report_file
+
+    def is_new_account(self, tweet: Dict) -> bool:
+        """Check if an account is less than 90 days old."""
+        try:
+            created_at_str = tweet.get('author_created_at', '')
+            if not created_at_str:
+                return False
+                
+            # Parse the created_at date
+            if isinstance(created_at_str, str):
+                # Try different date formats
+                for fmt in ('%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%d %H:%M:%S%z', '%a %b %d %H:%M:%S %z %Y'):
+                    try:
+                        created_at = datetime.strptime(created_at_str, fmt)
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    # If none of the formats match
+                    return False
+            else:
+                # Already a datetime object
+                created_at = created_at_str
+                
+            # Calculate account age in days
+            now = datetime.now(timezone.utc) if created_at.tzinfo else datetime.now()
+            account_age_days = (now - created_at).days
+            
+            return account_age_days < 90
+        except Exception:
+            return False
 
 def main():
     """Main function for standalone execution."""
