@@ -831,6 +831,7 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         for tweet in tweets:
             tweet_text = tweet.get('text', '').replace('\n', ' ').replace('\r', '')
             summary_rows.append({
+                'trend_topic': tweet.get('trend_topic', ''),
                 'author_username': tweet.get('author_username', ''),
                 'author_name': tweet.get('author_name', ''),
                 'author_followers': tweet.get('author_followers', tweet.get('author_followers_count', 0)),
