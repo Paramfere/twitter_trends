@@ -695,8 +695,11 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
                 t.get('like_count', 0) + t.get('retweet_count', 0)
             ), reverse=True)
             
-            # Use all tweets for analysis, no filtering or limiting
-            high_quality = ranked_tweets
+            # Keep only tweets passing engagement threshold
+            high_quality = [
+                t for t in ranked_tweets
+                if (t.get('like_count', 0) + t.get('retweet_count', 0)) >= self.HIGH_ENGAGEMENT_THRESHOLD
+            ]
             
             if not high_quality:
                 logger.warning("No tweets collected")
