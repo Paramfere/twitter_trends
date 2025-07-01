@@ -39,7 +39,8 @@ class RuleBasedCategorizer:
         }
         # Symbols missing from CoinGecko list but relevant for our monitoring
         self.MANUAL_TOKEN_SYMBOLS: Set[str] = {
-            'vader', 'cabal', 'monad', 'core', 'coredao'
+            'vader', 'cabal', 'monad', 'core', 'coredao',
+            'bome', 'bom', 'lyra'
         }
     
     def _setup_rules(self):
@@ -204,8 +205,19 @@ class RuleBasedCategorizer:
         # Determine sentiment
         sentiment = self._determine_sentiment(topic_lower, category, tweet_volume)
         
-        # Calculate significance score
-        significance_score = self._calculate_significance(topic_lower, category, tweet_volume, region)
+        # Determine if topic is explicit ticker/cashtag
+        stripped = topic_lower.lstrip('#')
+        is_ticker = self._is_token_symbol(stripped)
+
+        # Calculate significance score (with category, subcategory and ticker modifiers)
+        significance_score = self._calculate_significance(
+            topic_lower,
+            category,
+            subcategory,
+            tweet_volume,
+            region,
+            is_ticker,
+        )
         
         # Generate context and trending reason
         context = self._generate_context(topic, category, subcategory, tweet_volume)
@@ -232,14 +244,14 @@ class RuleBasedCategorizer:
     def _categorize_topic(self, topic_lower: str, tweet_volume: int) -> tuple:
         """Determine category and subcategory for a topic."""
         
-        # 0) Direct match against known token names / symbols (allow leading '#')
         stripped = topic_lower.lstrip('#')
-        if self._is_token_symbol(stripped):
-            return 'Technology', 'Crypto', 0.9
-        
-        # 0a) Exact token name match (case-insensitive) excluding common words
-        if stripped in self.token_names and stripped not in self.GENERIC_WORD_BLACKLIST:
-            return 'Technology', 'Crypto', 0.85
+
+        # ---------------------------------------------
+        # Crypto evidence scoring gate
+        # ---------------------------------------------
+        evidence = self._crypto_evidence(topic_lower, stripped)
+        if evidence >= 2:
+            return 'Technology', 'Crypto', 0.9 if evidence >= 3 else 0.85
         
         # Check hashtags first
         if topic_lower.startswith('#'):
@@ -324,8 +336,8 @@ class RuleBasedCategorizer:
         # Use category defaults
         return self.CATEGORY_SENTIMENT_DEFAULTS.get(category, 'neutral')
     
-    def _calculate_significance(self, topic_lower: str, category: str, tweet_volume: int, region: str) -> int:
-        """Calculate significance score 1-10."""
+    def _calculate_significance(self, topic_lower: str, category: str, subcategory: str, tweet_volume: int, region: str, is_ticker: bool) -> int:
+        """Calculate significance score 1-10 applying custom category modifiers."""
         
         base_score = 1
         
@@ -341,16 +353,29 @@ class RuleBasedCategorizer:
         else:
             base_score = 1
         
-        # Category modifiers
-        if category == 'Politics' and tweet_volume > 100000:
-            base_score += 1
-        elif category == 'News/Events' and tweet_volume > 200000:
-            base_score += 2
-        elif category == 'Entertainment' and tweet_volume > 500000:
-            base_score += 1
+        # Reset previous modifiers and apply new rules
+        modifier = 0
+        if category == 'Politics':
+            modifier -= 2  # de-emphasise political noise
+        elif category == 'Technology':
+            sub_lower = subcategory.lower()
+            if sub_lower == 'crypto':
+                modifier += 3
+            elif sub_lower in {
+                'ai', 'blockchain', 'layer1', 'layer2', 'defi', 'wallets', 'dao', 'gamefi', 'metaverse'
+            }:
+                modifier += 1  # real tech topics
+            # Buzzwords or generic tech terms get no extra boost
+        # News/Events and Entertainment now have neutral (0) modifier
+
+        # Highest priority: explicit ticker/cashtag gets big boost
+        if is_ticker:
+            modifier += 5  # ensure tickers surface to top
+
+        base_score += modifier
         
-        # Cap at 10
-        return min(base_score, 10)
+        # Ensure score stays within 1-10 range
+        return max(1, min(base_score, 10))
     
     def _generate_context(self, topic: str, category: str, subcategory: str, tweet_volume: int) -> str:
         """Generate contextual explanation for the topic."""
@@ -476,11 +501,45 @@ class RuleBasedCategorizer:
     def _is_token_symbol(self, topic_raw: str) -> bool:
         """Return True if topic looks like a known token symbol (uppercase 2-6 chars or $SYMBOL)."""
         topic_stripped = topic_raw.strip()
-        # Perform case-insensitive ticker detection by evaluating the upper-cased version
+
+        # Must be a cashtag ($XYZ) OR the original string is ALL CAPS to avoid generic words
+        if not (topic_stripped.startswith('$') or topic_stripped.isupper()):
+            return False
+
         candidate = topic_stripped.upper()
+
         if not self.TOKEN_TICKER_RE.fullmatch(candidate):
             return False
 
         symbol = candidate.lstrip('$')  # remove leading $
         sym_lower = symbol.lower()
         return sym_lower in self.token_symbols or sym_lower in self.MANUAL_TOKEN_SYMBOLS 
+
+    # ------------------- Crypto evidence helper -------------------
+    def _crypto_evidence(self, topic_lower: str, stripped: str) -> int:
+        """Return evidence score that topic refers to a crypto asset/project."""
+        score = 0
+
+        # a) Ticker/cashtag match in token symbol list (+2)
+        if self._is_token_symbol(stripped):
+            score += 2
+
+        # b) Exact token name in list (+1) if not generic word
+        if stripped in self.token_names and stripped not in self.GENERIC_WORD_BLACKLIST:
+            score += 1
+
+        # c) Manual overrides (+1)
+        if stripped in self.MANUAL_TOKEN_SYMBOLS:
+            score += 1
+
+        # d) Keyword buckets (+1) if any WEB3_KEYWORDS match
+        for keywords in self.WEB3_KEYWORDS.values():
+            if any(self._keyword_in_topic(topic_lower, kw) for kw in keywords):
+                score += 1
+                break
+
+        # e) DAO suffix (+1)
+        if topic_lower.endswith('dao') and len(topic_lower) > 3:
+            score += 1
+
+        return score 

@@ -14,6 +14,7 @@ from pathlib import Path
 import pandas as pd
 import argparse
 from typing import Dict, Any
+import numpy as np
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -164,6 +165,10 @@ def main():
         raw_df.to_csv(raw_file, index=False)
         logger.info(f"💾 Raw data saved: {raw_file}")
 
+        # Load historical trend snapshots if available
+        history_path = Path('data/trending_history.csv')
+        history_df = pd.read_csv(history_path) if history_path.exists() else pd.DataFrame()
+
         # Categorize topics
         logger.info("🏷️ Categorizing topics…")
         enhanced_df = pd.DataFrame()
@@ -188,13 +193,41 @@ def main():
                 analysis = analysis_results.get(topic_name)  # type: ignore[arg-type]
                 
                 if analysis:
+                    # Determine ticker flag using categorizer helper
+                    is_ticker_flag = categorizer._is_token_symbol(topic_name.lower())  # type: ignore[attr-defined]
+
+                    # Historical metrics
+                    is_new = False
+                    volume_change = 0
+                    velocity = 0.0
+
+                    if not history_df.empty:
+                        prev = history_df[(history_df['region'] == region) & (history_df['topic'] == topic_name)]
+                        if not prev.empty:
+                            last_row = prev.iloc[-1]
+                            prev_volume = int(last_row['tweet_volume'])
+                            prev_time = datetime.fromisoformat(last_row['timestamp'])
+                            now_time = datetime.utcnow()
+                            volume_change = row['tweet_volume'] - prev_volume
+                            delta_minutes = max((now_time - prev_time).total_seconds() / 60.0, 1)
+                            velocity = volume_change / delta_minutes
+                        else:
+                            is_new = True
+                    else:
+                        is_new = True
+
+                    # Apply +3 significance for new topics
+                    significance_score = analysis.significance_score
+                    if is_new:
+                        significance_score = min(significance_score + 3, 10)
+
                     enhanced_row = {
                         'region': region,
                         'topic': topic_name,
                         'tweet_volume': row['tweet_volume'],
                         'category': analysis.category,
                         'subcategory': analysis.subcategory,
-                        'significance_score': analysis.significance_score,
+                        'significance_score': significance_score,
                         'sentiment': analysis.sentiment,
                         'context': analysis.context,
                         'trending_reason': analysis.trending_reason,
@@ -202,18 +235,56 @@ def main():
                         'web3_relevance': analysis.web3_relevance,
                         'crypto_connection': analysis.crypto_connection,
                         'tech_relationship': analysis.tech_relationship,
+                        'is_new': is_new,
+                        'volume_change': volume_change,
+                        'velocity': round(float(velocity), 2),
                         'url': row.get('url', ''),
-                        'fetched_at': row.get('fetched_at', datetime.now().isoformat())
+                        'fetched_at': row.get('fetched_at', datetime.now().isoformat()),
+                        'is_ticker': is_ticker_flag
                     }
                     
                     enhanced_df = pd.concat([enhanced_df, pd.DataFrame([enhanced_row])], ignore_index=True)
         
-        # Filter for tech and web3 topics
+        # -----------------------------------------------------------------
+        # Relaxed rules: keep the full topic list but ensure ordering so that
+        # tokens / Web3 crypto topics appear first.
+        # -----------------------------------------------------------------
+
         tech_df = filter_tech_web3_topics(enhanced_df, categorizer)
+        
+        # -------------------------------------------------
+        # Assign priority and sort: tickers → crypto → rest
+        # -------------------------------------------------
+        tech_df.drop_duplicates(subset=["topic"], inplace=True)  # type: ignore[arg-type]
+
+        tech_df['priority'] = np.where(
+            tech_df['is_ticker'], 0,
+            np.where(
+                (tech_df['category'] == 'Technology') & (tech_df['subcategory'] == 'Crypto'), 1, 2
+            )
+        )
+
+        tech_df.sort_values(  # type: ignore[arg-type]
+            by=['priority', 'significance_score', 'tweet_volume'],
+            ascending=[True, False, False],
+            inplace=True,
+        )
         
         # Save tech topics
         tech_df.to_csv(tech_file, index=False)
         logger.info(f"💾 Tech topics saved: {tech_file}")
+        
+        # ---------------------------------------------
+        # Append current snapshot to history CSV
+        # ---------------------------------------------
+        try:
+            snapshot = raw_df[['region', 'topic', 'tweet_volume']].copy()
+            snapshot['timestamp'] = datetime.utcnow().isoformat()
+            header = not history_path.exists()
+            snapshot.to_csv(history_path, mode='a', index=False, header=header)
+            logger.info("🗄️  Snapshot appended to trending_history.csv")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not write history snapshot: {e}")
         
         # Save copies to latest directory for quick access
         try:
@@ -226,7 +297,7 @@ def main():
             logger.warning(f"⚠️ Could not copy tech topics to latest: {e}")
         
         # Generate tech report
-        report_text = generate_tech_report(tech_df, timestamp)
+        report_text = generate_tech_report(tech_df, timestamp)  # type: ignore[arg-type]
         report_file = session_dir / "analysis" / f"{timestamp}_tech_report.txt"
         with open(report_file, 'w') as f:
             f.write(report_text)
@@ -248,7 +319,7 @@ def main():
             try:
                 from scripts.content_analysis_engine import AntiGamingContentEngine
                 engine = AntiGamingContentEngine()
-                report_path = engine.run_tech_content_analysis(session_dir, tech_df)
+                report_path = engine.run_tech_content_analysis(session_dir, tech_df)  # type: ignore[arg-type]
                 if report_path:
                     logger.info(f"✅ Tech Content Analysis: {report_path}")
                 else:
